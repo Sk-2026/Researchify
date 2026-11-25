@@ -1,69 +1,255 @@
-import Image from "next/image";
+
+"use client";
+
+import { useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://127.0.0.1:8000/api/v1";
 
 export default function Home() {
+  const [isRegister, setIsRegister] = useState(false);
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const router = useRouter();
+
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      if (isRegister) {
+        const registerResponse = await fetch(
+          `${API_URL}/auth/register`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              full_name: fullName,
+              email,
+              password,
+            }),
+          }
+        );
+
+        const registerData = await registerResponse.json();
+
+        if (!registerResponse.ok) {
+          throw new Error(
+            registerData.detail ?? "Registration failed."
+          );
+        }
+      }
+
+      const loginResponse = await fetch(`${API_URL}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const loginData = await loginResponse.json();
+
+      if (!loginResponse.ok) {
+        throw new Error(loginData.detail ?? "Login failed.");
+      }
+
+        const token = loginData.access_token;
+
+        localStorage.setItem("zealwithin_token", token);
+
+        // Check whether the user already has a research profile.
+        const profileResponse = await fetch(`${API_URL}/profile`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (profileResponse.ok) {
+          router.replace("/dashboard");
+        } else if (profileResponse.status === 404) {
+          router.replace("/onboarding");
+        } else {
+          throw new Error("Could not verify your research profile.");
+        }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <main className="min-h-screen bg-[#f7f8fc] flex items-center justify-center p-5">
+      <div className="w-full max-w-5xl grid md:grid-cols-2 bg-white rounded-3xl shadow-xl overflow-hidden">
+
+        {/* Left panel */}
+        <section className="bg-[#172554] text-white p-10 md:p-14 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center gap-3 mb-16">
+              <div className="w-11 h-11 rounded-xl bg-blue-500 flex items-center justify-center text-2xl font-bold">
+                R
+              </div>
+              <span className="text-2xl font-bold tracking-tight">
+                ZealWithin
+              </span>
+            </div>
+
+            <p className="text-blue-300 text-sm font-semibold uppercase tracking-widest mb-4">
+              Your research companion
+            </p>
+
+            <h1 className="text-4xl md:text-5xl font-bold leading-tight mb-6">
+              Keep the researcher in you alive.
+            </h1>
+
+            <p className="text-blue-100 leading-7 text-base">
+              Discover meaningful research, explore new ideas,
+              and stay ahead in your research journey.
+            </p>
+          </div>
+
+          <div className="mt-16 space-y-5">
+            {[
+              ["01", "Discover the latest academic papers"],
+              ["02", "Get recommendations tailored to you"],
+              ["03", "Never miss important research"],
+            ].map(([number, text]) => (
+              <div key={number} className="flex items-center gap-4">
+                <span className="text-blue-300 font-bold">
+                  {number}
+                </span>
+                <span className="text-sm text-blue-100">
+                  {text}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Right panel */}
+        <section className="p-8 md:p-14 flex flex-col justify-center">
+          <p className="text-sm text-blue-600 font-semibold mb-3">
+            WELCOME TO ZealWithin
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+
+          <h2 className="text-3xl font-bold text-gray-900 mb-3">
+            {isRegister ? "Create your account" : "Welcome back"}
+          </h2>
+
+          <p className="text-gray-500 mb-8">
+            {isRegister
+              ? "Start your personalized research journey."
+              : "Sign in to continue your research journey."}
+          </p>
+
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {isRegister && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Full name
+                </label>
+                <input
+                  type="text"
+                  required
+                  minLength={2}
+                  maxLength={150}
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="Your full name"
+                  className="w-full rounded-xl border border-gray-200 px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Email address
+              </label>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full rounded-xl border border-gray-200 px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Password
+              </label>
+              <input
+                type="password"
+                required
+                minLength={8}
+                maxLength={128}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter your password"
+                className="w-full rounded-xl border border-gray-200 px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            {error && (
+              <div className="rounded-xl bg-red-50 text-red-700 p-3 text-sm">
+                {error}
+              </div>
+            )}
+
+            {message && (
+              <div className="rounded-xl bg-green-50 text-green-700 p-3 text-sm">
+                {message}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold py-3.5 transition"
+            >
+              {loading
+                ? "Please wait..."
+                : isRegister
+                  ? "Create account"
+                  : "Sign in"}
+            </button>
+          </form>
+
+          <div className="mt-7 text-center text-sm text-gray-500">
+            {isRegister
+              ? "Already have an account?"
+              : "New to ZealWithin?"}
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsRegister(!isRegister);
+                setError("");
+                setMessage("");
+              }}
+              className="ml-2 text-blue-600 font-semibold hover:underline"
+            >
+              {isRegister ? "Sign in" : "Create an account"}
+            </button>
+          </div>
+
+          <p className="text-center text-xs text-gray-400 mt-12">
+            ZealWithin · Keep the researcher in you alive.
+          </p>
+        </section>
+      </div>
+    </main>
   );
 }
