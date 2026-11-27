@@ -1,20 +1,70 @@
 
 import os
 import asyncio
+import time
 import httpx
 
-from datetime import date
+from datetime import date, datetime, timezone
+from email.utils import parsedate_to_datetime
+
 from app.integrations.base import PaperRecord
 
 
 class SemanticScholarClient:
 
-    BASE_URL = (
-        "https://api.semanticscholar.org/graph/v1/paper/search"
-    )
+    BASE_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
+
+    # Shared across all SemanticScholarClient instances in this process.
+    _request_lock = asyncio.Lock()
+    _last_request_time = 0.0
+    _minimum_request_interval = 1.0
 
     def __init__(self):
         self.api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+
+    @classmethod
+    async def _wait_for_rate_limit(cls):
+        """
+        Ensure requests from this process start at least one second apart.
+        """
+        async with cls._request_lock:
+            now = time.monotonic()
+            elapsed = now - cls._last_request_time
+
+            if elapsed < cls._minimum_request_interval:
+                await asyncio.sleep(
+                    cls._minimum_request_interval - elapsed
+                )
+
+            cls._last_request_time = time.monotonic()
+
+    @staticmethod
+    def _get_retry_delay(retry_after: str | None, attempt: int) -> float:
+        """
+        Parse Retry-After as seconds or an HTTP date.
+        Fall back to exponential backoff.
+        """
+        if retry_after:
+            try:
+                return min(max(float(retry_after), 1.0), 60.0)
+            except ValueError:
+                try:
+                    retry_date = parsedate_to_datetime(retry_after)
+
+                    if retry_date.tzinfo is None:
+                        retry_date = retry_date.replace(
+                            tzinfo=timezone.utc
+                        )
+
+                    delay = (
+                        retry_date - datetime.now(timezone.utc)
+                    ).total_seconds()
+
+                    return min(max(delay, 1.0), 60.0)
+                except (TypeError, ValueError, OverflowError):
+                    pass
+
+        return min(2 ** (attempt + 1), 60.0)
 
     async def search(
         self,
@@ -39,7 +89,12 @@ class SemanticScholarClient:
 
         async with httpx.AsyncClient(timeout=30.0) as client:
 
+            response = None
+
             for attempt in range(max_retries + 1):
+
+                # Enforce the one-request-per-second limit.
+                await self._wait_for_rate_limit()
 
                 response = await client.get(
                     self.BASE_URL,
@@ -51,22 +106,18 @@ class SemanticScholarClient:
 
                     if attempt == max_retries:
                         raise RuntimeError(
-                            "Semantic Scholar rate limit exceeded. "
-                            "Try again later or configure an API key."
+                            "Semantic Scholar rate limit exceeded "
+                            "after retries. Please try again later."
                         )
 
-                    retry_after = response.headers.get("Retry-After")
-
-                    try:
-                        delay = float(retry_after) if retry_after else 2 ** (attempt + 1)
-                    except ValueError:
-                        delay = 2 ** (attempt + 1)
-
-                    delay = min(delay, 60)
+                    delay = self._get_retry_delay(
+                        response.headers.get("Retry-After"),
+                        attempt,
+                    )
 
                     print(
-                        f"Semantic Scholar rate limited. "
-                        f"Retrying in {delay} seconds..."
+                        "Semantic Scholar rate limited. "
+                        f"Retrying in {delay:.1f} seconds..."
                     )
 
                     await asyncio.sleep(delay)
@@ -74,6 +125,11 @@ class SemanticScholarClient:
 
                 response.raise_for_status()
                 break
+
+            if response is None:
+                raise RuntimeError(
+                    "Semantic Scholar request failed without a response."
+                )
 
             results = response.json().get("data", [])
 

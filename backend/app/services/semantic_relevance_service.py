@@ -16,7 +16,23 @@ class SemanticRelevanceScorer:
     def __init__(self):
         self.embedding_service = EmbeddingService()
 
-    def score(self, paper, researcher_keywords: list[str]) -> SemanticResult:
+    @staticmethod
+    def transform_similarity(similarity: float) -> float:
+        """
+        Preserve positive cosine similarity.
+        Negative similarity receives zero.
+
+        This is a similarity score, not a calibrated
+        probability of research relevance.
+        """
+        similarity = max(0.0, min(1.0, similarity))
+        return round(similarity, 4)
+
+    def score(
+        self,
+        paper,
+        researcher_keywords: list[str],
+    ) -> SemanticResult:
 
         if not researcher_keywords:
             return SemanticResult(
@@ -35,6 +51,13 @@ class SemanticRelevanceScorer:
             )
         )
 
+        if not interest_embeddings:
+            return SemanticResult(
+                score=0.0,
+                matched_interest=None,
+                interest_scores={},
+            )
+
         interest_scores = {}
 
         for keyword, interest_embedding in interest_embeddings.items():
@@ -52,10 +75,14 @@ class SemanticRelevanceScorer:
             key=interest_scores.get,
         )
 
-        best_score = interest_scores[best_interest]
+        best_similarity = interest_scores[best_interest]
+
+        semantic_score = self.transform_similarity(
+            best_similarity
+        )
 
         return SemanticResult(
-            score=round(best_score, 4),
+            score=semantic_score,
             matched_interest=best_interest,
             interest_scores=interest_scores,
         )

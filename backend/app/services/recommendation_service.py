@@ -7,12 +7,14 @@ from app.services.recency_service import RecencyScorer
 
 from app.services.feedback_service import (
     FeedbackLearningService,
-    FeedbackRecord,
 )
+
+
 @dataclass
 class RecommendationResult:
     paper: object
     final_score: float
+    relevance_score: float
     semantic_score: float
     keyword_score: float
     recency_score: float
@@ -22,13 +24,28 @@ class RecommendationResult:
 
 
 class RecommendationService:
+    """
+    Ranks papers by research relevance and personalization.
 
-    SEMANTIC_WEIGHT = 0.50
-    KEYWORD_WEIGHT = 0.25
-    RECENCY_WEIGHT = 0.15
-    FEEDBACK_WEIGHT = 0.10
+    Research relevance:
+        55% semantic similarity
+        45% keyword relevance
 
-    NEUTRAL_FEEDBACK = 0.50
+    Final ranking:
+        70% research relevance
+        25% recency
+         5% researcher feedback
+
+    relevance_score is a ranking component, NOT a calibrated
+    probability that a paper is relevant.
+    """
+
+    SEMANTIC_WEIGHT = 0.55
+    KEYWORD_WEIGHT = 0.45
+
+    RELEVANCE_RANKING_WEIGHT = 0.70
+    RECENCY_WEIGHT = 0.25
+    FEEDBACK_WEIGHT = 0.05
 
     def __init__(self):
         self.keyword_scorer = KeywordRelevanceScorer()
@@ -42,17 +59,12 @@ class RecommendationService:
         researcher_keywords,
         feedback_history=None,
     ):
-
         included_keywords, _ = (
-            self.keyword_scorer.extract_keywords(researcher_keywords)
+            self.keyword_scorer.extract_keywords(
+                researcher_keywords
+            )
         )
 
-        interest_embeddings = (
-            self.semantic_scorer.embedding_service
-            .generate_interest_embeddings(included_keywords)
-        )
-
-        # Learn the researcher's topic preferences.
         preferences = (
             self.feedback_service.calculate_interest_preferences(
                 feedback_history or []
@@ -63,6 +75,7 @@ class RecommendationService:
 
         for paper in papers:
 
+            # 1. Exact keyword relevance and excluded-topic filtering.
             keyword_result = self.keyword_scorer.score(
                 paper,
                 researcher_keywords,
@@ -71,44 +84,27 @@ class RecommendationService:
             if keyword_result.is_excluded:
                 continue
 
-            # Semantic relevance.
-            if interest_embeddings:
+            # 2. Semantic relevance.
+            semantic_result = self.semantic_scorer.score(
+                paper,
+                included_keywords,
+            )
 
-                paper_embedding = (
-                    self.semantic_scorer.embedding_service
-                    .generate_paper_embedding(paper)
-                )
+            semantic_score = semantic_result.score
+            matched_interest = semantic_result.matched_interest
 
-                interest_scores = {
-                    keyword: max(
-                        0.0,
-                        self.semantic_scorer.embedding_service
-                        .cosine_similarity(
-                            paper_embedding,
-                            interest_embedding,
-                        ),
-                    )
-                    for keyword, interest_embedding
-                    in interest_embeddings.items()
-                }
+            # 3. Research relevance (used for notification threshold).
+            relevance_score = (
+                self.SEMANTIC_WEIGHT * semantic_score
+                + self.KEYWORD_WEIGHT * keyword_result.score
+            )
 
-                matched_interest = max(
-                    interest_scores,
-                    key=interest_scores.get,
-                )
-
-                semantic_score = interest_scores[matched_interest]
-
-            else:
-                semantic_score = 0.0
-                matched_interest = None
-
-            # Recency.
+            # 4. Recency.
             recency_score = self.recency_scorer.score(
                 paper.publication_date
             )
 
-            # Personalized feedback score.
+            # 5. Researcher feedback.
             feedback_score = (
                 self.feedback_service.score_candidate(
                     matched_interest,
@@ -116,10 +112,9 @@ class RecommendationService:
                 )
             )
 
-            # Unified ranking.
+            # 6. Final personalized ranking.
             final_score = (
-                self.SEMANTIC_WEIGHT * semantic_score
-                + self.KEYWORD_WEIGHT * keyword_result.score
+                self.RELEVANCE_RANKING_WEIGHT * relevance_score
                 + self.RECENCY_WEIGHT * recency_score
                 + self.FEEDBACK_WEIGHT * feedback_score
             )
@@ -128,9 +123,10 @@ class RecommendationService:
                 RecommendationResult(
                     paper=paper,
                     final_score=round(final_score, 4),
+                    relevance_score=round(relevance_score, 4),
                     semantic_score=round(semantic_score, 4),
-                    keyword_score=keyword_result.score,
-                    recency_score=recency_score,
+                    keyword_score=round(keyword_result.score, 4),
+                    recency_score=round(recency_score, 4),
                     feedback_score=round(feedback_score, 4),
                     matched_keywords=keyword_result.matched_keywords,
                     matched_interest=matched_interest,

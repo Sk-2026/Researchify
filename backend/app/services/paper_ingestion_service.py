@@ -1,6 +1,6 @@
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,7 @@ class IngestionResult:
     inserted: int = 0
     updated: int = 0
     sources_added: int = 0
+    newly_associated_papers: list[Paper] = field(default_factory=list)
 
 
 class PaperIngestionService:
@@ -139,13 +140,16 @@ class PaperIngestionService:
             )
 
             if existing_user_paper is None:
-                db.add(
-                    UserPaper(
-                        user_id=user_id,
-                        paper_id=paper.id,
-                        status=PaperStatus.NEW,
-                    )
+                user_paper = UserPaper(
+                    user_id=user_id,
+                    paper_id=paper.id,
+                    status=PaperStatus.NEW,
                 )
+
+                db.add(user_paper)
+
+                # Track only first-time researcher-paper associations.
+                result.newly_associated_papers.append(paper)
 
         await db.flush()
 

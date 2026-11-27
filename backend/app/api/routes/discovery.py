@@ -1,13 +1,15 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
-from app.models.research_profile import ResearchProfile, ResearchKeyword
-from app.services.research_pipeline_service import ResearchPipelineService
+
+from app.services.notification_monitoring_service import (
+    NotificationMonitoringService,
+)
+
 from app.schemas.discovery import DiscoveryRunResponse
 
 
@@ -16,7 +18,7 @@ router = APIRouter(
     tags=["Paper Discovery"],
 )
 
-pipeline_service = ResearchPipelineService()
+monitoring_service = NotificationMonitoringService()
 
 
 @router.post(
@@ -28,60 +30,45 @@ async def run_discovery(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # 1. Load the authenticated researcher's profile.
-    profile = await db.scalar(
-        select(ResearchProfile).where(
-            ResearchProfile.user_id == current_user.id
-        )
-    )
-
-    if profile is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Research profile not found.",
-        )
-
-    # 2. Load the researcher's keywords.
-    keyword_result = await db.scalars(
-        select(ResearchKeyword).where(
-            ResearchKeyword.profile_id == profile.id
-        )
-    )
-
-    researcher_keywords = list(keyword_result.all())
-
-    included_keywords = [
-        keyword.keyword.strip()
-        for keyword in researcher_keywords
-        if not keyword.is_excluded and keyword.keyword.strip()
-    ]
-
-    if not included_keywords:
-        raise HTTPException(
-            status_code=400,
-            detail="Add at least one research interest first.",
-        )
-
-    # 3. Run discovery and store the papers.
     try:
-        result = await pipeline_service.discover_and_store(
-            keywords=included_keywords,
+        result = await monitoring_service.monitor_user(
             db=db,
-            user_id=current_user.id,
+            user=current_user,
             limit_per_source=limit_per_source,
         )
 
-        await db.commit()
+        if result.message == "Research profile not found.":
+            raise HTTPException(
+                status_code=404,
+                detail=result.message,
+            )
 
-    except Exception:
-        await db.rollback()
+        if result.message == "No active research interests.":
+            raise HTTPException(
+                status_code=400,
+                detail="Add at least one research interest first.",
+            )
+
+        return DiscoveryRunResponse(
+            message=(
+                f"{result.message} "
+                f"{result.new_papers_count} new researcher-paper "
+                f"associations found; "
+                f"{result.notifications_created} qualifying notifications "
+                f"created; "
+                f"email {'sent' if result.email_sent else 'not sent'}."
+            ),
+            discovered_count=result.discovered_count,
+            inserted_count=result.inserted_count,
+            updated_count=result.updated_count,
+            sources_added=0,
+        )
+
+    except HTTPException:
         raise
 
-    # 4. Return discovery statistics.
-    return DiscoveryRunResponse(
-        message="Research paper discovery completed successfully.",
-        discovered_count=result.discovered_count,
-        inserted_count=result.inserted_count,
-        updated_count=result.updated_count,
-        sources_added=result.sources_added,
-    )
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Paper discovery failed. Check backend logs.",
+        )

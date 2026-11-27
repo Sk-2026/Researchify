@@ -16,16 +16,18 @@ class RelevanceResult:
 
 class KeywordRelevanceScorer:
     """
-    Calculates keyword-based relevance between a researcher's
-    interests and an academic paper.
+    Calculates keyword relevance using weighted title and abstract
+    matching.
+
+    Exact phrase matches are retained as a reliable signal.
+    Title matches receive more weight than abstract matches.
     """
 
-    TITLE_WEIGHT = 0.70
-    ABSTRACT_WEIGHT = 0.30
+    TITLE_WEIGHT = 0.75
+    ABSTRACT_WEIGHT = 0.25
 
     @staticmethod
     def normalize(text: str) -> str:
-        """Normalize text for case-insensitive phrase matching."""
         words = re.findall(r"\w+", text.casefold())
         return " ".join(words)
 
@@ -43,10 +45,7 @@ class KeywordRelevanceScorer:
     def extract_keywords(
         researcher_keywords: Iterable[Any],
     ) -> tuple[list[str], list[str]]:
-        """
-        Accepts either strings or ResearchKeyword model objects.
-        Returns included and excluded keyword lists.
-        """
+
         included = []
         excluded = []
 
@@ -84,12 +83,15 @@ class KeywordRelevanceScorer:
         return included, excluded
 
     def score(self, paper, researcher_keywords) -> RelevanceResult:
+
         title = paper.title or ""
         abstract = paper.abstract or ""
 
-        included, excluded = self.extract_keywords(researcher_keywords)
+        included, excluded = self.extract_keywords(
+            researcher_keywords
+        )
 
-        # Excluded topics act as hard filters.
+        # Excluded topics remain hard filters.
         excluded_matches = [
             keyword
             for keyword in excluded
@@ -132,7 +134,7 @@ class KeywordRelevanceScorer:
         title_score = len(title_matches) / total_keywords
         abstract_score = len(abstract_matches) / total_keywords
 
-        # If an abstract is unavailable, use title score alone.
+        # A paper without an abstract is scored using its title.
         if abstract.strip():
             final_score = (
                 self.TITLE_WEIGHT * title_score
@@ -141,7 +143,9 @@ class KeywordRelevanceScorer:
         else:
             final_score = title_score
 
-        matched = list(dict.fromkeys(title_matches + abstract_matches))
+        matched = list(
+            dict.fromkeys(title_matches + abstract_matches)
+        )
 
         return RelevanceResult(
             score=round(final_score, 4),
@@ -153,7 +157,6 @@ class KeywordRelevanceScorer:
         )
 
     def rank(self, papers, researcher_keywords):
-        """Return papers ranked by relevance, excluding unwanted topics."""
         ranked = []
 
         for paper in papers:

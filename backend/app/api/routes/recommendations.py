@@ -7,17 +7,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.database import get_db
+from app.core.dependencies import get_current_user
 from app.models.feedback import UserFeedback
 from app.models.paper import Paper, PaperStatus, UserPaper
 from app.models.research_profile import ResearchProfile, ResearchKeyword
+from app.models.user import User
 from app.schemas.recommendation import (
     RecommendationListResponse,
     RecommendedPaperResponse,
 )
 from app.services.feedback_service import FeedbackRecord
 from app.services.recommendation_service import RecommendationService
-from app.core.dependencies import get_current_user
-from app.models.user import User
+
 
 router = APIRouter(
     prefix="/recommendations",
@@ -33,10 +34,12 @@ recommendation_service = RecommendationService()
 )
 async def get_recommendations(
     current_user: User = Depends(get_current_user),
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
     user_id = current_user.id
+
     # 1. Load the researcher's profile.
     profile = await db.scalar(
         select(ResearchProfile).where(
@@ -60,7 +63,8 @@ async def get_recommendations(
     researcher_keywords = list(keyword_result.all())
 
     included_keywords = [
-        keyword for keyword in researcher_keywords
+        keyword
+        for keyword in researcher_keywords
         if not keyword.is_excluded
     ]
 
@@ -70,9 +74,8 @@ async def get_recommendations(
             detail="Add at least one research interest first.",
         )
 
-    # 3. Load candidate papers.
-    # Include papers that are new or not yet associated
-    # with this user. Exclude saved, read, and dismissed papers.
+    # 3. Load ALL eligible candidate papers.
+    # Do not apply pagination before ranking.
     paper_result = await db.scalars(
         select(Paper)
         .outerjoin(
@@ -88,7 +91,6 @@ async def get_recommendations(
                 UserPaper.status == PaperStatus.NEW,
             )
         )
-        .limit(500)
     )
 
     papers = list(paper_result.all())
@@ -119,7 +121,7 @@ async def get_recommendations(
         if feedback.matched_interest
     ]
 
-    # 5. Run ranking outside the async event loop.
+    # 5. Rank all candidates before pagination.
     ranked = await run_in_threadpool(
         recommendation_service.rank,
         papers,
@@ -127,7 +129,13 @@ async def get_recommendations(
         feedback_history,
     )
 
-    # 6. Convert ranked results into API responses.
+    # RecommendationService already sorts by final_score descending.
+    total = len(ranked)
+
+    # 6. Apply pagination AFTER ranking.
+    page_results = ranked[offset:offset + limit]
+
+    # 7. Convert the current page into API responses.
     recommendations = [
         RecommendedPaperResponse(
             id=item.paper.id,
@@ -146,10 +154,10 @@ async def get_recommendations(
             matched_keywords=item.matched_keywords,
             matched_interest=item.matched_interest,
         )
-        for item in ranked[:limit]
+        for item in page_results
     ]
 
     return RecommendationListResponse(
-        total=len(recommendations),
+        total=total,
         recommendations=recommendations,
     )

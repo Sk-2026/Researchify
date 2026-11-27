@@ -17,3 +17,5 @@ class PaperRecord:
     venue: str | None = None
     citation_count: int | None = None
     source_url: str | None = None
+
+    keywords: list[str] | None = None

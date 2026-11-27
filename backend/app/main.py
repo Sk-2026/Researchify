@@ -7,13 +7,17 @@ from app.api.routes.feedback import router as feedback_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.profile import router as profile_router
 from app.api.routes.discovery import router as discovery_router
+from app.api.routes.paper_import import router as paper_import_router
+from app.api.routes.notifications import router as notifications_router
 from app.api.routes import papers
 
+
 app = FastAPI(
-    title="Researchify API",
+    title="ZealWithin API",
     description="Your personalized AI research companion",
     version="0.1.0",
 )
+
 
 # Allow the Next.js frontend to communicate with FastAPI.
 app.add_middleware(
@@ -31,7 +35,7 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {
-        "message": "Welcome to Researchify!",
+        "message": "Welcome to ZealWithin!",
         "status": "running",
     }
 
@@ -40,7 +44,7 @@ async def root():
 async def health_check():
     return {
         "status": "healthy",
-        "service": "researchify-backend",
+        "service": "zealwithin-backend",
     }
 
 
@@ -50,3 +54,5 @@ app.include_router(feedback_router, prefix="/api/v1")
 app.include_router(profile_router, prefix="/api/v1")
 app.include_router(discovery_router, prefix="/api/v1")
 app.include_router(papers.router, prefix="/api/v1")
+app.include_router(paper_import_router, prefix="/api/v1")
+app.include_router(notifications_router, prefix="/api/v1")
